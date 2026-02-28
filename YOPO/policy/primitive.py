@@ -47,13 +47,13 @@ class LatticePrimitive(LatticeParam):
         if self.horizon_num == 1:
             direction_diff = 0
         else:
-            direction_diff = (self.horizon_fov / 180.0 * torch.pi) / self.horizon_num
+            direction_diff = (self.horizon_fov / 180.0 * torch.pi) / self.horizon_num # 水平单个分隔角度范围
 
         if self.vertical_num == 1:
             altitude_diff = 0
         else:
-            altitude_diff = (self.vertical_fov / 180.0 * torch.pi) / self.vertical_num
-        radio_diff = self.radio_range / self.radio_num
+            altitude_diff = (self.vertical_fov / 180.0 * torch.pi) / self.vertical_num # 垂直单个分隔角度范围
+        radio_diff = self.radio_range / self.radio_num #最大采样半径/半径采样数量（5/1）
 
         lattice_pos_list = []
         lattice_angle_list = []
@@ -63,23 +63,26 @@ class LatticePrimitive(LatticeParam):
         for h in range(0, self.radio_num):
             for i in range(0, self.vertical_num):
                 for j in range(0, self.horizon_num):
-                    search_radio = (h + 1) * radio_diff
-                    alpha = torch.tensor(-direction_diff * (self.horizon_num - 1) / 2 + j * direction_diff)
+                    search_radio = (h + 1) * radio_diff # 搜索半径,球坐标半径
+                    alpha = torch.tensor(-direction_diff * (self.horizon_num - 1) / 2 + j * direction_diff) # 水平采样,在每个区域的中心采样角度
                     beta = torch.tensor(-altitude_diff * (self.vertical_num - 1) / 2 + i * altitude_diff)
 
                     pos_node = torch.tensor([torch.cos(beta) * torch.cos(alpha) * search_radio,
                                              torch.cos(beta) * torch.sin(alpha) * search_radio,
-                                             torch.sin(beta) * search_radio])
+                                             torch.sin(beta) * search_radio]) # 3D位置 x y z
 
-                    lattice_pos_list.append(pos_node)
-                    lattice_angle_list.append(torch.tensor([alpha, beta]))
-                    Rotation = R.from_euler('ZYX', [alpha, -beta, 0.0], degrees=False)  # inner rotation: yaw-pitch-roll
+                    lattice_pos_list.append(pos_node) # 把采样的位置加入列表
+                    lattice_angle_list.append(torch.tensor([alpha, beta])) # 把采样的角度加入列表
+                    Rotation = R.from_euler('ZYX', [alpha, -beta, 0.0], degrees=False)  # inner rotation: yaw-pitch-roll 旋转矩阵
                     lattice_Rbp_list.append(torch.tensor(Rotation.as_matrix()))
 
+        # 将列表转换为tensor发送到GPU或CPU
         self.lattice_pos_node = torch.stack(lattice_pos_list).to(dtype=torch.float32, device=device)  # shape: [N, 3]
         self.lattice_angle_node = torch.stack(lattice_angle_list).to(dtype=torch.float32, device=device)  # shape: [N, 2]
         self.lattice_Rbp_node = torch.stack(lattice_Rbp_list).to(dtype=torch.float32, device=device)  # shape: [N, 3, 3]
 
+        # horizon_anchor_fov: 30.0
+        # vertical_anchor_fov: 30.0
         self.yaw_diff = 0.5 * self.horizon_anchor_fov / 180.0 * torch.pi
         self.pitch_diff = 0.5 * self.vertical_anchor_fov / 180.0 * torch.pi
 

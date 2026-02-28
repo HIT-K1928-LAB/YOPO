@@ -40,7 +40,7 @@ class YopoNet:
         self.use_trt = self.config['use_tensorrt']
         self.verbose = self.config['verbose']
         self.visualize = self.config['visualize']
-        self.Rotation_bc = R.from_euler('ZYX', [0, self.config['pitch_angle_deg'], 0], degrees=True).as_matrix()
+        self.Rotation_bc = R.from_euler('ZYX', [0, self.config['pitch_angle_deg'], 0], degrees=True).as_matrix() # 相机到机体的旋转矩阵,相机俯仰角
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # variables
@@ -78,36 +78,36 @@ class YopoNet:
             self.policy.load_state_dict(torch.load(weight))
         else:
             state_dict = torch.load(weight, weights_only=True)
-            self.policy = YopoNetwork()
-            self.policy.load_state_dict(state_dict)
-            self.policy = self.policy.to(self.device)
-            self.policy.eval()
-        self.warm_up()
+            self.policy = YopoNetwork() # 网络层结构,包含forward方法
+            self.policy.load_state_dict(state_dict) # 加载权重参数
+            self.policy = self.policy.to(self.device) # 将模型加载到GPU或CPU
+            self.policy.eval() # 设置为推理模式，关闭dropout和batchnorm等训练特有的操作
+        self.warm_up() # 模拟一个全0的深度图和观测输入进行前向推理，预热GPU
 
         # ros publisher
-        self.lattice_traj_pub = rospy.Publisher("/yopo_net/lattice_trajs_visual", PointCloud2, queue_size=1)
-        self.best_traj_pub = rospy.Publisher("/yopo_net/best_traj_visual", PointCloud2, queue_size=1)
-        self.all_trajs_pub = rospy.Publisher("/yopo_net/trajs_visual", PointCloud2, queue_size=1)
-        self.ctrl_pub = rospy.Publisher(self.config["ctrl_topic"], PositionCommand, queue_size=1)
+        self.lattice_traj_pub = rospy.Publisher("/yopo_net/lattice_trajs_visual", PointCloud2, queue_size=1) # 发布可视化候选轨迹点云
+        self.best_traj_pub = rospy.Publisher("/yopo_net/best_traj_visual", PointCloud2, queue_size=1) # 发布最优轨迹点云
+        self.all_trajs_pub = rospy.Publisher("/yopo_net/trajs_visual", PointCloud2, queue_size=1) # 可视化所有轨迹候选
+        self.ctrl_pub = rospy.Publisher(self.config["ctrl_topic"], PositionCommand, queue_size=1) # 发布无人机控制指令
         # ros subscriber
-        self.odom_sub = rospy.Subscriber(self.config['odom_topic'], Odometry, self.callback_odometry, queue_size=1, tcp_nodelay=True)
-        self.depth_sub = rospy.Subscriber(self.config['depth_topic'], Image, self.callback_depth, queue_size=1, tcp_nodelay=True)
-        self.goal_sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.callback_set_goal, queue_size=1)
+        self.odom_sub = rospy.Subscriber(self.config['odom_topic'], Odometry, self.callback_odometry, queue_size=1, tcp_nodelay=True) # 订阅里程计
+        self.depth_sub = rospy.Subscriber(self.config['depth_topic'], Image, self.callback_depth, queue_size=1, tcp_nodelay=True) # 订阅深度图像
+        self.goal_sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.callback_set_goal, queue_size=1) # 获取设定目标点
         # ros timer
         rospy.sleep(1.0)  # wait connection...
-        self.timer_ctrl = rospy.Timer(rospy.Duration(self.ctrl_dt), self.control_pub)
+        self.timer_ctrl = rospy.Timer(rospy.Duration(self.ctrl_dt), self.control_pub) # 定时执行无人机控制逻辑并发布
         print("YOPO Net Node Ready!")
-        rospy.spin()
+        rospy.spin() # 阻塞当前线程并让节点持续运行
 
     def callback_set_goal(self, data):
-        self.goal = np.asarray([data.pose.position.x, data.pose.position.y, 2])
+        self.goal = np.asarray([data.pose.position.x, data.pose.position.y, 2]) # 固定高度2米
         self.arrive = False
         print(f"New Goal: ({data.pose.position.x:.1f}, {data.pose.position.y:.1f})")
 
     # the first frame
     def callback_odometry(self, data):
         self.odom = data
-        if not self.desire_init:
+        if not self.desire_init: # 第一次执行初始化,期望位置为当前位置
             self.desire_pos = np.array((self.odom.pose.pose.position.x, self.odom.pose.pose.position.y, self.odom.pose.pose.position.z))
             self.desire_vel = np.array((self.odom.twist.twist.linear.x, self.odom.twist.twist.linear.y, self.odom.twist.twist.linear.z))
             self.desire_acc = np.array((0.0, 0.0, 0.0))
@@ -144,25 +144,28 @@ class YopoNet:
 
     @torch.inference_mode()
     def callback_depth(self, data):
-        if not self.odom_init: return
+        if not self.odom_init: return # 里程计初始化后再进行下面推理
 
         # 1. Depth Image Process (Be careful with the depth units in your application)
         time0 = time.time()
-        if data.encoding == "32FC1":    # Simulator, meter
+        if data.encoding == "32FC1":    # Simulator, meter 测距单位米
             depth = np.frombuffer(data.data, dtype=np.float32).reshape(data.height, data.width)
-        elif data.encoding == "16UC1":  # RealSense, millimeter
+        elif data.encoding == "16UC1":  # RealSense, millimeter 测距单位毫米
             depth = np.frombuffer(data.data, dtype=np.uint16).reshape(data.height, data.width).astype(np.float32) / 1000.0
         else:
             raise ValueError(f"Unsupported depth encoding: {data.encoding}. Expected '32FC1' or '16UC1'.")
 
+        # 调整深度图到网络要求的大小
         if depth.shape[0] != self.height or depth.shape[1] != self.width:
             depth = cv2.resize(depth, (self.width, self.height), interpolation=cv2.INTER_NEAREST)
+
+        # 剪裁过远的距离并归一化 [0,1]
         depth = np.minimum(depth, self.max_dis) / self.max_dis
 
         # interpolated the nan value (experiment shows that treating nan directly as 0 produces similar results)
-        nan_mask = np.isnan(depth) | (depth < self.min_dis / self.max_dis)
-        interpolated_image = cv2.inpaint(np.uint8(depth * 255), np.uint8(nan_mask), 1, cv2.INPAINT_NS)
-        interpolated_image = interpolated_image.astype(np.float32) / 255.0
+        nan_mask = np.isnan(depth) | (depth < self.min_dis / self.max_dis) # 检测深度图中 NaN 值 和过近的值
+        interpolated_image = cv2.inpaint(np.uint8(depth * 255), np.uint8(nan_mask), 1, cv2.INPAINT_NS) # 填补图像中无效区域
+        interpolated_image = interpolated_image.astype(np.float32) / 255.0 # 再次归一化到 [0, 1]
         depth = interpolated_image.reshape([1, 1, self.height, self.width])
         # cv2.imshow("1", depth[0][0])
         # cv2.waitKey(1)
@@ -170,26 +173,27 @@ class YopoNet:
         # 2. YOPO Network Inference
         # input prepare
         time1 = time.time()
-        depth_input = torch.from_numpy(depth).to(self.device, non_blocking=True)  # (non_blocking: copying speed 3x)
-        obs_norm = self.process_odom().to(self.device, non_blocking=True)
-        obs_input = self.state_transform.prepare_input(obs_norm)
+        depth_input = torch.from_numpy(depth).to(self.device, non_blocking=True)  # (non_blocking: copying speed 3x) 将深度图从CPU传输到GPU
+        obs_norm = self.process_odom().to(self.device, non_blocking=True) # 将观测状态从CPU传输到GPU
+        obs_input = self.state_transform.prepare_input(obs_norm) # 坐标变换到基元坐标系下,准备CNN输入格式
         # torch.cuda.synchronize()
 
         time2 = time.time()
         # Forward (TensorRT: inference speed increased by 5x)
-        endstate_pred, score_pred = self.policy(depth_input, obs_input)
-        endstate_pred, score_pred = endstate_pred.cpu().numpy(), score_pred.cpu().numpy()
+        endstate_pred, score_pred = self.policy(depth_input, obs_input) # 前向推理
+        endstate_pred, score_pred = endstate_pred.cpu().numpy(), score_pred.cpu().numpy() # 将结果从GPU传输到CPU
         time3 = time.time()
 
         # 3. Post-Processing
         # Replacing PyTorch operation on CUDA with NumPy operation on CPU (speed increased by 10x)
-        endstate, score = self.process_output(endstate_pred, score_pred, return_all_preds=self.visualize)
+        endstate, score = self.process_output(endstate_pred, score_pred, return_all_preds=self.visualize) # 将预测的 primitive frame 末态转换到 body frame
         # Vectorization: transform the prediction(P V A in body frame) to the world frame with the attitude (without the position)
         endstate_c = endstate.reshape(-1, 3, 3).transpose(0, 2, 1)  # [N, 9] -> [N, 3, 3] -> [px vx ax, py vy ay, pz vz az]
-        endstate_w = np.matmul(self.Rotation_wc, endstate_c)
+        endstate_w = np.matmul(self.Rotation_wc, endstate_c) # 将末态从 body frame → 世界坐标系
 
-        action_id = np.argmin(score) if self.visualize else 0
+        action_id = np.argmin(score) if self.visualize else 0 # 根据 score 选择最优 primitive → action_id
         with self.lock:  # Python3.8: threads are scheduled using time slices, add the lock to ensure safety
+            # 使用当前里程计位置速度作为起点
             start_pos = self.desire_pos if self.plan_from_reference else np.array((self.odom.pose.pose.position.x, self.odom.pose.pose.position.y, self.odom.pose.pose.position.z))
             start_vel = self.desire_vel if self.plan_from_reference else np.array((self.odom.twist.twist.linear.x, self.odom.twist.twist.linear.y, self.odom.twist.twist.linear.z))
             self.optimal_poly_x = Poly5Solver(start_pos[0], start_vel[0], self.desire_acc[0], endstate_w[action_id, 0, 0] + start_pos[0],
@@ -206,7 +210,7 @@ class YopoNet:
         self.print_time(time0, time1, time2, time3, time4, time5)
 
     def control_pub(self, _timer):
-        if self.ctrl_time is None or self.ctrl_time > self.traj_time:
+        if self.ctrl_time is None or self.ctrl_time > self.traj_time: # 如果控制时间未初始化或者轨迹已经结束（ctrl_time > traj_time），直接返回
             return
         if self.arrive and self.last_control_msg is not None:
             self.desire_init = False   # ready for next rollout
@@ -219,6 +223,8 @@ class YopoNet:
             control_msg = PositionCommand()
             control_msg.header.stamp = rospy.Time.now()
             control_msg.trajectory_flag = control_msg.TRAJECTORY_STATUS_READY
+
+            # 沿轨迹计算状态（位置、速度、加速度）
             control_msg.position.x = self.optimal_poly_x.get_position(self.ctrl_time)
             control_msg.position.y = self.optimal_poly_y.get_position(self.ctrl_time)
             control_msg.position.z = self.optimal_poly_z.get_position(self.ctrl_time)
@@ -228,11 +234,14 @@ class YopoNet:
             control_msg.acceleration.x = self.optimal_poly_x.get_acceleration(self.ctrl_time)
             control_msg.acceleration.y = self.optimal_poly_y.get_acceleration(self.ctrl_time)
             control_msg.acceleration.z = self.optimal_poly_z.get_acceleration(self.ctrl_time)
+
+            # 更新期望状态
             self.desire_pos = np.array([control_msg.position.x, control_msg.position.y, control_msg.position.z])
             self.desire_vel = np.array([control_msg.velocity.x, control_msg.velocity.y, control_msg.velocity.z])
             self.desire_acc = np.array([control_msg.acceleration.x, control_msg.acceleration.y, control_msg.acceleration.z])
-            goal_dir = self.goal - self.desire_pos
-            yaw, yaw_dot = calculate_yaw(self.desire_vel, goal_dir, self.last_yaw, self.ctrl_dt)
+
+            goal_dir = self.goal - self.desire_pos # 当前位置到目标的方向向量
+            yaw, yaw_dot = calculate_yaw(self.desire_vel, goal_dir, self.last_yaw, self.ctrl_dt) # 计算无人机航向角和航向角速度
             self.last_yaw = yaw
             control_msg.yaw = yaw
             control_msg.yaw_dot = yaw_dot
@@ -352,10 +361,10 @@ class YopoNet:
                   f"visualize-trajectory: \033[32m{1000 * self.time_visualize / self.count:.2f} ms\033[0m")
 
     def warm_up(self):
-        depth = torch.zeros((1, 1, self.height, self.width), dtype=torch.float32, device=self.device)
-        obs = torch.zeros((1, 9), dtype=torch.float32, device=self.device)
-        obs = self.state_transform.prepare_input(obs)
-        endstate_pred, score_pred = self.policy(depth, obs)
+        depth = torch.zeros((1, 1, self.height, self.width), dtype=torch.float32, device=self.device) # 模拟一个全0的深度图输入
+        obs = torch.zeros((1, 9), dtype=torch.float32, device=self.device) # 模拟一个全0的观测输入
+        obs = self.state_transform.prepare_input(obs) # 转换成BCVH格式
+        endstate_pred, score_pred = self.policy(depth, obs) # 前向推理
         _ = self.state_transform.pred_to_endstate(endstate_pred)
 
 
@@ -368,18 +377,25 @@ def parser():
 
 
 if __name__ == "__main__":
+
+    # 解析外部的传入参数 --trial=1 --epoch=50
     args = parser().parse_args()
+
+    # 获取当前绝对路径
     base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # 加载权重文件 使用tensorRT yopo_trt.pth 或 不使用tensorRT YOPO_{trial}/epoch{epoch}.pth
     weight = "yopo_trt.pth" if args.use_tensorrt else base_dir + "/saved/YOPO_{}/epoch{}.pth".format(args.trial, args.epoch)
     print("load weight from:", weight)
 
+    # 配置参数
     settings = {'use_tensorrt': args.use_tensorrt,
                 'goal': [50, 0, 2],      # 目标点位置
                 'pitch_angle_deg': -0,   # 相机俯仰角(仰为负)
                 'odom_topic': '/sim/odom',                   # 里程计话题
                 'depth_topic': '/depth_image',               # 深度图话题
                 'ctrl_topic': '/so3_control/pos_cmd',        # 控制器话题
-                'plan_from_reference': False,   # 从参考状态规划？位置控制器: True, 神经网络直接控制: False
+                'plan_from_reference': False,   # 从参考状态规划
                 'verbose': False,               # 打印耗时？
                 'visualize': True               # 可视化所有轨迹？(实飞改为False节省计算)
                 }

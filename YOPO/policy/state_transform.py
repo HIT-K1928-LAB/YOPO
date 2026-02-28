@@ -83,23 +83,25 @@ class StateTransform:
             obs: [batch; vx, vy, yz, ax, ay, az, gx, gy, gz] in body frame
             :return [batch; vx, vy, yz, ax, ay, az, gx, gy, gz; primitive_v; primitive_h] in primitive frame
         """
+
+        # B是有多少组vx, vy, yz, ax, ay, az, gx, gy, gz,就是batch size, N=radio_num*vertical_num*horizon_num（1*3*5）基元轨迹数量
         B, N = obs.shape[0], self.lattice_primitive.traj_num
 
-        # 获取所有 Rbp 并倒序排列 (由于lattice和grid的顺序相反)
+        # 获取所有 Rbp旋转矩阵 并倒序排列 (由于lattice和grid的顺序相反)
         Rbp_all = self.lattice_primitive.getRotation().flip(0)  # shape: [N, 3, 3]
 
-        obs = obs.view(B, 3, 3)  # [B, 3, 3]
+        obs = obs.view(B, 3, 3)  # [B, 3, 3] 在不拷贝数据的前提下，重新解释同一块内存的形状 把1*9行向量变成3*3矩阵
 
-        # 扩展 obs 和 Rbp 到 [B, N, 3, 3]
-        obs_exp = obs[:, None, :, :].expand(B, N, 3, 3)
-        Rbp_exp = Rbp_all[None, :, :, :].expand(B, N, 3, 3)
+        # 扩展 obs 和 Rbp 到 [B, N, 3, 3] 把同样的状态变量复制N份,也就是N个基元轨迹数量
+        obs_exp = obs[:, None, :, :].expand(B, N, 3, 3) # 对基元维度扩展
+        Rbp_exp = Rbp_all[None, :, :, :].expand(B, N, 3, 3) # 对batch维度扩展,因为对于不同的batch,基元轨迹旋转是一样的
 
         # 执行批量坐标变换
         transformed = torch.matmul(obs_exp, Rbp_exp)  # [B, N, 3, 3]
 
-        transformed_flat = transformed.view(B, N, 9)  # [B, N, 9]
-        out = transformed_flat.permute(0, 2, 1).contiguous()  # [B, 9, N]
-        out = out.view(B, 9, self.lattice_primitive.vertical_num, self.lattice_primitive.horizon_num)  # [B, 9, V, H]
+        transformed_flat = transformed.view(B, N, 9)  # [B, N, 9] 3*3矩阵变成1*9行向量
+        out = transformed_flat.permute(0, 2, 1).contiguous()  # [B, 9, N] CNN 通常希望 channel 放在第二维 这里 channel 就是 9 个特征（v/a/g）
+        out = out.view(B, 9, self.lattice_primitive.vertical_num, self.lattice_primitive.horizon_num)  # [B, 9, V, H] 重排成 lattice 网格 BCVH
         return out
 
     def unnormalize_obs(self, vel_acc):

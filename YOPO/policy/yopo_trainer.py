@@ -27,7 +27,7 @@ class YopoTrainer:
             checkpoint_path=None,
             save_on_exit=False,
     ):
-        self.batch_size = batch_size
+        self.batch_size = batch_size # 每次训练进行参数更新的样本数
         self.max_grad_norm = 0.1
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.loss_weight = loss_weight
@@ -44,7 +44,7 @@ class YopoTrainer:
         self.policy = YopoNetwork()
         self.policy = self.policy.to(self.device)
         try:
-            state_dict = torch.load(checkpoint_path, weights_only=True)
+            state_dict = torch.load(checkpoint_path, weights_only=True) # 如果 checkpoint_path 指向的文件存在 加载模型权重
             self.policy.load_state_dict(state_dict)
             print("Checkpoint ", checkpoint_path, " loaded successfully")
         except FileNotFoundError:
@@ -61,16 +61,16 @@ class YopoTrainer:
         self.train_dataloader = DataLoader(YOPODataset(mode='train'), batch_size=self.batch_size, shuffle=True,
                                            num_workers=4, pin_memory=True)
         self.val_dataloader = DataLoader(YOPODataset(mode='valid'), batch_size=self.batch_size, shuffle=False,
-                                         num_workers=4, pin_memory=True)
+                                         num_workers=4, pin_memory=True) # 评估数据集
         print("Dataset Loaded!")
 
     def train(self, epoch, save_interval=None):
-        with self.progress_log:
-            total_progress = self.progress_log.add_task("Training", total=epoch)
-            for self.epoch_i in range(epoch):
-                self.policy.train()
+        with self.progress_log: # 进度条
+            total_progress = self.progress_log.add_task("Training", total=epoch) # 总共要完成 epoch 次循环
+            for self.epoch_i in range(epoch): # 主体循环
+                self.policy.train() # 告诉网络：接下来是训练阶段
                 self.train_one_epoch(self.epoch_i, total_progress)
-                self.policy.eval()
+                self.policy.eval() # 网络切换到评估阶段
                 self.eval_one_epoch(self.epoch_i)
                 if save_interval is not None and (self.epoch_i + 1) % save_interval == 0:
                     self.progress_log.console.log("Saving model...")
@@ -84,17 +84,17 @@ class YopoTrainer:
         inspect_interval = max(1, len(self.train_dataloader) // 16)
         traj_losses, score_losses, smooth_losses, safety_losses, goal_losses, acc_losses, start_time = [], [], [], [], [], [], time.time()
         for step, (depth, pos, rot, obs_b, map_id) in enumerate(self.train_dataloader):  # obs: body frame
-            if depth.shape[0] != self.batch_size:  continue  # batch size == number of env
+            if depth.shape[0] != self.batch_size:  continue  # batch size == number of env 丢弃 最后一个不满 batch
 
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad() # 清空梯度缓存
 
             trajectory_loss, score_loss, smooth_cost, safety_cost, goal_cost, acc_cost = self.forward_and_compute_loss(depth, pos, rot, obs_b, map_id)
 
             loss = self.loss_weight[0] * trajectory_loss + self.loss_weight[1] * score_loss
 
             # Optimize the policy
-            loss.backward()
-            self.optimizer.step()
+            loss.backward() #反向传播
+            self.optimizer.step() # 参数更新
 
             traj_losses.append(self.loss_weight[0] * trajectory_loss.item())
             score_losses.append(self.loss_weight[1] * score_loss.item())

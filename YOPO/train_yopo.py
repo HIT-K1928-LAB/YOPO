@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 from policy.yopo_trainer import YopoTrainer
 
-
+# 随机种子配置
 def configure_random_seed(seed):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -15,7 +15,7 @@ def configure_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
 
-
+# 命令行参数解析
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pretrained", type=int, default=0, help="use pre-trained model?")
