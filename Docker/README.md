@@ -70,14 +70,14 @@ Orin
 
 ``` bash
 # 安装torchvision
-sudo apt install -y \  
-libjpeg-dev \  
-zlib1g-dev \  
-libpng-dev \  
-libopenblas-dev \  
-libavcodec-dev \  
-libavformat-dev \  
-libswscale-dev \  
+sudo apt install -y \
+libjpeg-dev \
+zlib1g-dev \
+libpng-dev \
+libopenblas-dev \
+libavcodec-dev \
+libavformat-dev \
+libswscale-dev \
 libomp-dev
 
 git clone --branch release/0.16 https://github.com/pytorch/vision.git
@@ -89,7 +89,7 @@ python3 setup.py install
 
 ```python
 # 测试torchvision
-import torchvision  
+import torchvision
 print(torchvision.__version__)
 ```
 
@@ -203,6 +203,46 @@ orin测试接收
 
 ``` bash
 rostopic echo /test
+```
+
+### 使用Tensorrt进行推理加速
+
+1. Prepare
+```
+# 在宿主机
+sudo apt update
+sudo apt install -y \
+    python3-libnvinfer \
+    python3-libnvinfer-dev \
+    libnvinfer8 \
+    libnvinfer-dev \
+    libnvinfer-plugin8 \
+    libnvinfer-plugin-dev \
+    libnvinfer-bin
+
+# 进入虚拟环境
+conda activate yopo
+
+echo "/usr/lib/python3.8/dist-packages" > $CONDA_PREFIX/lib/python3.8/site-packages/jetson_system_packages.pth
+
+# 测试
+python -c "import tensorrt as trt; print(trt.__version__)"
+
+git clone https://github.com/NVIDIA-AI-IOT/torch2trt
+cd torch2trt
+python setup.py install
+```
+2. PyTorch Model to TensorRT
+```
+cd YOPO
+conda activate yopo
+python yopo_trt_transfer.py --trial=1 --epoch=50
+```
+3. TensorRT Inference
+```
+cd YOPO
+conda activate yopo
+python test_yopo_ros.py --use_tensorrt=1
 ```
 
 ---
