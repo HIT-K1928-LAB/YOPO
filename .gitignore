@@ -13,6 +13,7 @@ Simulator/logs/
 Simulator/.catkin_tools/
 
 YOPO/saved/*
+YOPO/yopo_trt.pth
 dataset/
 yopo_sim/
 

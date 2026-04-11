@@ -20,6 +20,9 @@ cd ~/code/YOPO/YOPO
 conda activate yopo
 python test_yopo_ros.py --trial=1 --epoch=50
 
+使用tensorRT
+python test_yopo_ros.py --use_tensorrt=1
+
 cd ~/code/YOPO/YOPO
 rviz -d yopo.rviz
 
