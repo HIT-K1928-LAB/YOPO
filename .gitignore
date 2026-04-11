@@ -1,4 +1,7 @@
 .idea/
+.catkin_workspace
+
+__pycache__/
 
 Controller/devel/
 Controller/build/
