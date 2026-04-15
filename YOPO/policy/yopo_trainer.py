@@ -37,7 +37,7 @@ class YopoTrainer:
         self.tensorboard_path = self.get_next_log_path(tensorboard_path)
         self.tensorboard_log = SummaryWriter(log_dir=self.tensorboard_path)
         # params
-        self.traj_num = cfg['traj_num']
+        self.traj_num = cfg['traj_num'] # 横乘以竖乘以径向采样层数
 
         # network
         print("Loading network...")
@@ -53,7 +53,7 @@ class YopoTrainer:
         # loss
         self.yopo_loss = YOPOLoss()
 
-        # optimizer
+        # optimizer 更新参数
         self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=learning_rate, fused=True)
         print("Network Loaded! Loading Dataset...")
 
@@ -182,6 +182,7 @@ class YopoTrainer:
             torch.save(self.policy.state_dict(), policy_path)
             atexit.unregister(self._exit_func)
 
+    # 每次训练创建一个新的编号的文件夹
     def get_next_log_path(self, base_path):
         nums = [int(name.split("_")[1])
                 for name in os.listdir(base_path)

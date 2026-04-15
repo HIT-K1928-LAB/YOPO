@@ -25,7 +25,7 @@ vertical_camera_fov: 60.0
 horizon_anchor_fov: 30.0
 vertical_anchor_fov: 30.0
 radio_range: 5.0    # planning horizon: 2 * radio_range
-radio_num: 1        # only support 1 currently
+radio_num: 1        # only support 1 currently 径向采样层数
 
 # safety penalties
 d0: 1.2

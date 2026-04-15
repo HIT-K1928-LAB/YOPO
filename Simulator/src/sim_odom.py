@@ -4,6 +4,8 @@ from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Point, Quaternion
 import tf
 
+# 仅仅运行仿真环境时，发布一个固定的里程计消息，模拟无人机以2m/s的速度沿x轴前进，保持y轴和z轴位置不变，并且没有旋转。
+
 def publish_odometry():
     rospy.init_node('odom_publisher', anonymous=True)
     odom_pub = rospy.Publisher('/sim/odom', Odometry, queue_size=10)

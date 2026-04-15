@@ -23,7 +23,7 @@ class YopoNetwork(nn.Module):
         self.state_transform = StateTransform()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.image_backbone = YopoBackbone(hidden_state)
+        self.image_backbone = YopoBackbone(hidden_state) # 创建图像主干网络：特征提取器
         self.state_backbone = nn.Sequential()
         self.yopo_head = YopoHead(hidden_state + observation_dim, output_dim)
 
