@@ -9,16 +9,30 @@
 #include <ros/ros.h>
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Image.h>
+#include <std_msgs/Bool.h>
+#include <std_msgs/Float32.h>
 #include <pcl_ros/point_cloud.h>
 #include <cv_bridge/cv_bridge.h>
+#include <limits>
+#include <memory>
 #include <iostream>
 #include <vector>
 #include <yaml-cpp/yaml.h>
 #include "sensor_simulator.cuh"
 #include <chrono>
+#include "esdf_map.hpp"
 #include "maps.hpp"
 
 using namespace raycast;
+
+namespace {
+Eigen::Vector3f loadVector3(const YAML::Node &node, const Eigen::Vector3f &fallback) {
+    if (!node || !node.IsSequence() || node.size() != 3) {
+        return fallback;
+    }
+    return Eigen::Vector3f(node[0].as<float>(), node[1].as<float>(), node[2].as<float>());
+}
+}
 
 class SensorSimulator {
 public:
@@ -57,6 +71,16 @@ public:
         std::string odom_topic = config["odom_topic"].as<std::string>();
         std::string depth_topic = config["depth_topic"].as<std::string>();
         std::string lidar_topic = config["lidar_topic"].as<std::string>();
+        esdf_enabled_ = config["build_esdf"] ? config["build_esdf"].as<bool>() : true;
+        collision_check_ = config["enable_collision_check"] ? config["enable_collision_check"].as<bool>() : true;
+        collision_radius_ = config["collision_radius"] ? config["collision_radius"].as<float>() : 0.3f;
+        std::string collision_topic = config["collision_topic"] ? config["collision_topic"].as<std::string>() : "/sim/collision";
+        std::string clearance_topic = config["clearance_topic"] ? config["clearance_topic"].as<std::string>() : "/sim/collision_clearance";
+
+        EsdfMapConfig esdf_config;
+        esdf_config.resolution = config["esdf_resolution"] ? config["esdf_resolution"].as<float>() : 0.2f;
+        esdf_config.expand_min = loadVector3(config["esdf_expand_min"], Eigen::Vector3f(0.0f, 0.0f, 0.2f));
+        esdf_config.expand_max = loadVector3(config["esdf_expand_max"], Eigen::Vector3f(0.0f, 0.0f, 6.0f));
 
         // 读取地图参数
         bool use_random_map = config["random_map"].as<bool>();
@@ -101,17 +125,30 @@ public:
         std::cout<<"Pointloud size:"<<cloud->points.size()<<std::endl;
         printf("2.Mapping... \n");
         grid_map = new GridMap(cloud, resolution, occupy_threshold);
-        
-        ros::Time next_depth_pub_time = ros::Time::now();
-        ros::Time next_lidar_pub_time = ros::Time::now();
+
+        if (esdf_enabled_) {
+            printf("3.Building ESDF... \n");
+            esdf_map_ = std::make_unique<EsdfMap>(cloud, esdf_config);
+        }
+        if (!esdf_map_) {
+            esdf_enabled_ = false;
+            collision_check_ = false;
+        }
+
+        next_depth_pub_time = ros::Time::now();
+        next_lidar_pub_time = ros::Time::now();
 
         // ROS
         image_pub_ = nh_.advertise<sensor_msgs::Image>(depth_topic, 1);
         point_cloud_pub_ = nh_.advertise<sensor_msgs::PointCloud2>(lidar_topic, 1);
+        if (esdf_enabled_) {
+            collision_pub_ = nh_.advertise<std_msgs::Bool>(collision_topic, 1);
+            clearance_pub_ = nh_.advertise<std_msgs::Float32>(clearance_topic, 1);
+        }
         odom_sub_ = nh_.subscribe(odom_topic, 1, &SensorSimulator::odomCallback, this, ros::TransportHints().tcpNoDelay());
         timer_map_   = nh_.createTimer(ros::Duration(1), &SensorSimulator::timerMapCallback, this);
 
-        printf("3.Simulation Ready! \n");
+        printf("4.Simulation Ready! \n");
         ros::spin();
     }
 
@@ -123,9 +160,15 @@ public:
 
     void timerMapCallback(const ros::TimerEvent &);
 
+    void publishCollisionState();
+
 private:
     bool render_depth{false};
     bool render_lidar{false};
+    bool esdf_enabled_{false};
+    bool collision_check_{false};
+    bool collision_state_initialized_{false};
+    bool last_collision_state_{false};
     Eigen::Quaternionf quat;
     Eigen::Quaternionf quat_bc, quat_wc;
     Eigen::Vector3f pos;
@@ -133,11 +176,12 @@ private:
     CameraParams* camera;
     LidarParams* lidar;
     GridMap* grid_map;
+    std::unique_ptr<EsdfMap> esdf_map_;
     sensor_msgs::PointCloud2 output;
-    
+
     ros::NodeHandle nh_;
     ros::Publisher image_pub_, point_cloud_pub_;
-    ros::Publisher pcl_pub;
+    ros::Publisher pcl_pub, collision_pub_, clearance_pub_;
     ros::Subscriber odom_sub_;
     ros::Timer timer_depth_, timer_lidar_, timer_map_;
 
@@ -145,6 +189,8 @@ private:
     ros::Duration depth_pub_duration, lidar_pub_duration;
     double depth_time{0.0}, lidar_time{0.0};
     int depth_count{0}, lidar_count{0};
+    float collision_radius_{0.3f};
+    float last_clearance_{std::numeric_limits<float>::quiet_NaN()};
     // mocka::Maps map;
 };
 
@@ -177,7 +223,36 @@ void SensorSimulator::renderDepthCallback(const ros::Time stamp) {
 
 void SensorSimulator::timerMapCallback(const ros::TimerEvent&) {
     if (pcl_pub.getNumSubscribers() > 0)
-        pcl_pub.publish(output);    
+        pcl_pub.publish(output);
+}
+
+void SensorSimulator::publishCollisionState() {
+    if (!collision_check_ || !esdf_map_) {
+        return;
+    }
+
+    const float clearance = esdf_map_->queryDistance(pos);
+    const bool in_collision = clearance <= collision_radius_;
+
+    std_msgs::Float32 clearance_msg;
+    clearance_msg.data = clearance;
+    clearance_pub_.publish(clearance_msg);
+
+    std_msgs::Bool collision_msg;
+    collision_msg.data = in_collision;
+    collision_pub_.publish(collision_msg);
+
+    if (!collision_state_initialized_ || in_collision != last_collision_state_) {
+        if (in_collision) {
+            ROS_ERROR("Collision detected! clearance=%.3f m radius=%.3f m", clearance, collision_radius_);
+        } else {
+            ROS_INFO("Collision cleared. clearance=%.3f m", clearance);
+        }
+    }
+
+    collision_state_initialized_ = true;
+    last_collision_state_ = in_collision;
+    last_clearance_ = clearance;
 }
 
 void SensorSimulator::renderLidarCallback(const ros::Time stamp) {
@@ -189,7 +264,7 @@ void SensorSimulator::renderLidarCallback(const ros::Time stamp) {
     cudaMat::SE3<float> T_wc(quat.w(), quat.x(), quat.y(), quat.z(), pos.x(), pos.y(), pos.z());
     pcl::PointCloud<pcl::PointXYZ> lidar_points;
     renderLidarPointcloud(grid_map, lidar, T_wc, lidar_points);
-    
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end - start;
     lidar_time += elapsed.count();
@@ -213,6 +288,8 @@ void SensorSimulator::odomCallback(const nav_msgs::Odometry::ConstPtr& msg) {
     pos.x() = msg->pose.pose.position.x;
     pos.y() = msg->pose.pose.position.y;
     pos.z() = msg->pose.pose.position.z;
+
+    publishCollisionState();
 
     ros::Time tnow = ros::Time::now();
 

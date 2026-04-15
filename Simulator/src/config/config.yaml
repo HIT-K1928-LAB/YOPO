@@ -40,7 +40,7 @@ add_wall_x: 1
 add_wall_y: 1
 # 森林
 tree_file: "src/pointcloud/tree.ply"
-tree_dist: 4
+tree_dist: 3
 # 房间
 room_number: 4         # 每个方向上的房间数 (房间大小 = x_length / room_number)
 max_windows: 2         # 每面墙最多窗口数
@@ -74,7 +74,17 @@ lidar:
   horizontal_resolution: 1.0     # 水平分辨率为1度，horizontal_resolution * horizontal_num = 360
   max_lidar_dist: 20.0
 
-# 4. 数据收集参数 =============================================================
+# 4. 在线ESDF/碰撞检测 ========================================================
+build_esdf: true
+esdf_resolution: 0.2
+esdf_expand_min: [0.0, 0.0, 0.2]   # 地图下方额外扩展，保证地面以下也能判碰
+esdf_expand_max: [0.0, 0.0, 6.0]   # 地图上方额外扩展，和训练时ESDF高度范围保持一致
+enable_collision_check: true
+collision_radius: 0.3
+collision_topic: "/sim/collision"
+clearance_topic: "/sim/collision_clearance"
+
+# 5. 数据收集参数 =============================================================
 save_path: "../dataset/"
 env_num: 10             # 地图数量
 image_num: 10000        # 每个地图收集图像数量
