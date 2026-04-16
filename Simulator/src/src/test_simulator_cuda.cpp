@@ -32,6 +32,21 @@ Eigen::Vector3f loadVector3(const YAML::Node &node, const Eigen::Vector3f &fallb
     }
     return Eigen::Vector3f(node[0].as<float>(), node[1].as<float>(), node[2].as<float>());
 }
+
+constexpr std::size_t kMockMapPublishStride = 50;
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr buildMockMapPreview(
+    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr &cloud) {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr preview(new pcl::PointCloud<pcl::PointXYZ>());
+    preview->points.reserve((cloud->points.size() + kMockMapPublishStride - 1) / kMockMapPublishStride);
+    for (std::size_t idx = 0; idx < cloud->points.size(); idx += kMockMapPublishStride) {
+        preview->points.push_back(cloud->points[idx]);
+    }
+    preview->width = preview->points.size();
+    preview->height = 1;
+    preview->is_dense = cloud->is_dense;
+    return preview;
+}
 }
 
 class SensorSimulator {
@@ -66,7 +81,7 @@ public:
         float lidar_fps = config["lidar_fps"].as<float>();
         depth_pub_duration = ros::Duration(1 / depth_fps);
         lidar_pub_duration = ros::Duration(1 / lidar_fps);
-        
+
         std::string ply_file = config["ply_file"].as<std::string>();
         std::string odom_topic = config["odom_topic"].as<std::string>();
         std::string depth_topic = config["depth_topic"].as<std::string>();
@@ -119,8 +134,13 @@ public:
                 PCL_ERROR("Couldn't read PLY file \n");
             }
         }
-        pcl::toROSMsg(*cloud, output);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr mock_map_preview = buildMockMapPreview(cloud);
+        pcl::toROSMsg(*mock_map_preview, output);
         output.header.frame_id = "world";
+        ROS_INFO("Publishing mock_map preview with 1/%zu density: %zu / %zu points",
+                 kMockMapPublishStride,
+                 mock_map_preview->points.size(),
+                 cloud->points.size());
 
         std::cout<<"Pointloud size:"<<cloud->points.size()<<std::endl;
         printf("2.Mapping... \n");
