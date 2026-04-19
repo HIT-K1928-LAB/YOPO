@@ -3,6 +3,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/common/common.h>
 #include <pcl/common/eigen.h>
+#include <pcl/filters/voxel_grid.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <opencv2/opencv.hpp>
@@ -31,21 +32,6 @@ Eigen::Vector3f loadVector3(const YAML::Node &node, const Eigen::Vector3f &fallb
         return fallback;
     }
     return Eigen::Vector3f(node[0].as<float>(), node[1].as<float>(), node[2].as<float>());
-}
-
-constexpr std::size_t kMockMapPublishStride = 50;
-
-pcl::PointCloud<pcl::PointXYZ>::Ptr buildMockMapPreview(
-    const pcl::PointCloud<pcl::PointXYZ>::ConstPtr &cloud) {
-    pcl::PointCloud<pcl::PointXYZ>::Ptr preview(new pcl::PointCloud<pcl::PointXYZ>());
-    preview->points.reserve((cloud->points.size() + kMockMapPublishStride - 1) / kMockMapPublishStride);
-    for (std::size_t idx = 0; idx < cloud->points.size(); idx += kMockMapPublishStride) {
-        preview->points.push_back(cloud->points[idx]);
-    }
-    preview->width = preview->points.size();
-    preview->height = 1;
-    preview->is_dense = cloud->is_dense;
-    return preview;
 }
 }
 
@@ -86,6 +72,8 @@ public:
         std::string odom_topic = config["odom_topic"].as<std::string>();
         std::string depth_topic = config["depth_topic"].as<std::string>();
         std::string lidar_topic = config["lidar_topic"].as<std::string>();
+        const float mock_map_voxel_resolution =
+            config["mock_map_voxel_resolution"] ? config["mock_map_voxel_resolution"].as<float>() : 0.5f;
         esdf_enabled_ = config["build_esdf"] ? config["build_esdf"].as<bool>() : true;
         collision_check_ = config["enable_collision_check"] ? config["enable_collision_check"].as<bool>() : true;
         collision_radius_ = config["collision_radius"] ? config["collision_radius"].as<float>() : 0.3f;
@@ -102,6 +90,7 @@ public:
         float resolution = config["resolution"].as<float>();
         int occupy_threshold = config["occupy_threshold"].as<int>();
         pcl_pub = nh.advertise<sensor_msgs::PointCloud2>("mock_map", 1);
+        voxel_pcl_pub_ = nh.advertise<sensor_msgs::PointCloud2>("mock_map_voxel", 1);
         int seed = config["seed"].as<int>();
         int sizeX = config["x_length"].as<int>();
         int sizeY = config["y_length"].as<int>();
@@ -134,12 +123,21 @@ public:
                 PCL_ERROR("Couldn't read PLY file \n");
             }
         }
-        pcl::PointCloud<pcl::PointXYZ>::Ptr mock_map_preview = buildMockMapPreview(cloud);
-        pcl::toROSMsg(*mock_map_preview, output);
-        output.header.frame_id = "world";
-        ROS_INFO("Publishing mock_map preview with 1/%zu density: %zu / %zu points",
-                 kMockMapPublishStride,
-                 mock_map_preview->points.size(),
+        pcl::toROSMsg(*cloud, output_raw_);
+        output_raw_.header.frame_id = "world";
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr mock_map_voxel(new pcl::PointCloud<pcl::PointXYZ>());
+        pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
+        voxel_filter.setInputCloud(cloud);
+        voxel_filter.setLeafSize(mock_map_voxel_resolution,
+                                 mock_map_voxel_resolution,
+                                 mock_map_voxel_resolution);
+        voxel_filter.filter(*mock_map_voxel);
+        pcl::toROSMsg(*mock_map_voxel, output_voxel_);
+        output_voxel_.header.frame_id = "world";
+        ROS_INFO("Publishing mock_map_voxel with %.2f m resolution: %zu / %zu points",
+                 mock_map_voxel_resolution,
+                 mock_map_voxel->points.size(),
                  cloud->points.size());
 
         std::cout<<"Pointloud size:"<<cloud->points.size()<<std::endl;
@@ -197,11 +195,11 @@ private:
     LidarParams* lidar;
     GridMap* grid_map;
     std::unique_ptr<EsdfMap> esdf_map_;
-    sensor_msgs::PointCloud2 output;
+    sensor_msgs::PointCloud2 output_raw_, output_voxel_;
 
     ros::NodeHandle nh_;
     ros::Publisher image_pub_, point_cloud_pub_;
-    ros::Publisher pcl_pub, collision_pub_, clearance_pub_;
+    ros::Publisher pcl_pub, voxel_pcl_pub_, collision_pub_, clearance_pub_;
     ros::Subscriber odom_sub_;
     ros::Timer timer_depth_, timer_lidar_, timer_map_;
 
@@ -243,7 +241,9 @@ void SensorSimulator::renderDepthCallback(const ros::Time stamp) {
 
 void SensorSimulator::timerMapCallback(const ros::TimerEvent&) {
     if (pcl_pub.getNumSubscribers() > 0)
-        pcl_pub.publish(output);
+        pcl_pub.publish(output_raw_);
+    if (voxel_pcl_pub_.getNumSubscribers() > 0)
+        voxel_pcl_pub_.publish(output_voxel_);
 }
 
 void SensorSimulator::publishCollisionState() {

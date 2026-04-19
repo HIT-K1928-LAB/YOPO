@@ -12,6 +12,7 @@ lidar_fps: 10
 # 2. 仿真环境参数 =============================================================
 random_map: true       # 使用预先建立的点云地图还是随机地图
 resolution: 0.1        # 地图分辨率
+mock_map_voxel_resolution: 0.5   # /mock_map_voxel 体素可视化分辨率
 
 # 2.1 预先建立的点云地图 (此分支已弃用)
 ply_file: "src/pointcloud/forest.ply"
