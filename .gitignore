@@ -18,3 +18,5 @@ dataset/
 yopo_sim/
 
 !YOPO/saved/YOPO_1/
+
+*.bag
