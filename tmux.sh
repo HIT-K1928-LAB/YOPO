@@ -12,18 +12,33 @@ tmux has-session -t $SESH 2>/dev/null
 if [ $? != 0 ]; then
     tmux new-session -d -s $SESH -n "Controller"
 
-    tmux send-keys -t $SESH:Controller "export ROS_MASTER_URI=$ROS_MASTER_URI" C-m
-    tmux send-keys -t $SESH:Controller "export ROS_HOSTNAME=$ROS_HOSTNAME" C-m
-    tmux send-keys -t $SESH:Controller "cd \"$SCRIPT_DIR\"/Controller" C-m
-    tmux send-keys -t $SESH:Controller "source \"$SCRIPT_DIR\"/Controller/devel/setup.bash" C-m
-    tmux send-keys -t $SESH:Controller "roslaunch so3_quadrotor_simulator simulator_attitude_control.launch"
+    tmux send-keys -t $SESH:Controller.0 "export ROS_MASTER_URI=$ROS_MASTER_URI" C-m
+    tmux send-keys -t $SESH:Controller.0 "export ROS_HOSTNAME=$ROS_HOSTNAME" C-m
+    tmux send-keys -t $SESH:Controller.0 "cd \"$SCRIPT_DIR\"/Controller" C-m
+    tmux send-keys -t $SESH:Controller.0 "source \"$SCRIPT_DIR\"/Controller/devel/setup.bash" C-m
+    tmux send-keys -t $SESH:Controller.0 "roslaunch so3_quadrotor_simulator simulator_attitude_control.launch"
+
+    tmux split-window -h -t $SESH:Controller
+    tmux send-keys -t $SESH:Controller.1 "export ROS_MASTER_URI=$ROS_MASTER_URI" C-m
+    tmux send-keys -t $SESH:Controller.1 "export ROS_HOSTNAME=$ROS_HOSTNAME" C-m
+    tmux send-keys -t $SESH:Controller.1 "cd \"$SCRIPT_DIR\"/Controller" C-m
+    tmux send-keys -t $SESH:Controller.1 "source \"$SCRIPT_DIR\"/Controller/devel/setup.bash" C-m
+    tmux send-keys -t $SESH:Controller.1 "catkin_make -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release"
 
     tmux new-window -t $SESH -n "Simulator"
-    tmux send-keys -t $SESH:Simulator "export ROS_MASTER_URI=$ROS_MASTER_URI" C-m
-    tmux send-keys -t $SESH:Simulator "export ROS_HOSTNAME=$ROS_HOSTNAME" C-m
-    tmux send-keys -t $SESH:Simulator "cd \"$SCRIPT_DIR\"/Simulator" C-m
-    tmux send-keys -t $SESH:Simulator "source \"$SCRIPT_DIR\"/Simulator/devel/setup.bash" C-m
-    tmux send-keys -t $SESH:Simulator "rosrun sensor_simulator sensor_simulator_cuda "
+
+    tmux send-keys -t $SESH:Simulator.0 "export ROS_MASTER_URI=$ROS_MASTER_URI" C-m
+    tmux send-keys -t $SESH:Simulator.0 "export ROS_HOSTNAME=$ROS_HOSTNAME" C-m
+    tmux send-keys -t $SESH:Simulator.0 "cd \"$SCRIPT_DIR\"/Simulator" C-m
+    tmux send-keys -t $SESH:Simulator.0 "source \"$SCRIPT_DIR\"/Simulator/devel/setup.bash" C-m
+    tmux send-keys -t $SESH:Simulator.0 "rosrun sensor_simulator sensor_simulator_cuda "
+
+    tmux split-window -h -t $SESH:Simulator
+    tmux send-keys -t $SESH:Simulator.1 "export ROS_MASTER_URI=$ROS_MASTER_URI" C-m
+    tmux send-keys -t $SESH:Simulator.1 "export ROS_HOSTNAME=$ROS_HOSTNAME" C-m
+    tmux send-keys -t $SESH:Simulator.1 "cd \"$SCRIPT_DIR\"/Simulator" C-m
+    tmux send-keys -t $SESH:Simulator.1 "source \"$SCRIPT_DIR\"/Simulator/devel/setup.bash" C-m
+    tmux send-keys -t $SESH:Simulator.1 "catkin_make -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Release"
 
     tmux new-window -t $SESH -n "yopo"
     tmux send-keys -t $SESH:yopo "export ROS_MASTER_URI=$ROS_MASTER_URI" C-m
