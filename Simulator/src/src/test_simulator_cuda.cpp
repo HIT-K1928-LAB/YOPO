@@ -23,6 +23,7 @@
 #include <chrono>
 #include "esdf_map.hpp"
 #include "maps.hpp"
+#include <pcl/filters/crop_box.h>
 
 using namespace raycast;
 
@@ -92,14 +93,15 @@ public:
         pcl_pub = nh.advertise<sensor_msgs::PointCloud2>("mock_map", 1);
         voxel_pcl_pub_ = nh.advertise<sensor_msgs::PointCloud2>("mock_map_voxel", 1);
         int seed = config["seed"].as<int>();
-        int sizeX = config["x_length"].as<int>();
-        int sizeY = config["y_length"].as<int>();
-        int sizeZ = config["z_length"].as<int>();
-        int type = config["maze_type"].as<int>();
         double scale = 1 / resolution;
-        sizeX = sizeX * scale;
-        sizeY = sizeY * scale;
-        sizeZ = sizeZ * scale;
+        int actual_x = config["x_length"].as<int>();
+        int actual_y = config["y_length"].as<int>();
+        int actual_z = config["z_length"].as<int>();
+        int type = config["maze_type"].as<int>();
+
+        int sizeX = actual_x * scale;
+        int sizeY = actual_y * scale;
+        int sizeZ = actual_z * scale;
 
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
         if (use_random_map) {
@@ -123,6 +125,18 @@ public:
                 PCL_ERROR("Couldn't read PLY file \n");
             }
         }
+
+        // 裁剪点云
+        pcl::CropBox<pcl::PointXYZ> crop;
+        crop.setInputCloud(cloud);
+        crop.setMin(Eigen::Vector4f(- actual_x / 2.0f, -actual_y / 2.0f, 0, 1.0f));
+        crop.setMax(Eigen::Vector4f(actual_x / 2.0f, actual_y / 2.0f, actual_z / 2.0f, 1.0f));
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cropped(new pcl::PointCloud<pcl::PointXYZ>());
+        crop.filter(*cropped);
+        cloud = cropped;
+
+
         pcl::toROSMsg(*cloud, output_raw_);
         output_raw_.header.frame_id = "world";
 

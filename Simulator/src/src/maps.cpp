@@ -1,4 +1,5 @@
 #include "maps.hpp"
+#include "ros/console.h"
 
 using namespace mocka;
 
@@ -1027,24 +1028,29 @@ void Maps::forest()
 
 void Maps::generatePoissonPoints(float map_width, float map_height, float dist, std::vector<Eigen::Vector2f> &positions)
 {
-  float x_offset = map_width / 2.0f;
-  float y_offset = map_height / 2.0f;
-  
-  int rows = static_cast<int>(map_width / dist);
-  int cols = static_cast<int>(map_height / dist);
+    float x_offset = map_width / 2.0f;
+    float y_offset = map_height / 2.0f;
 
-  std::default_random_engine eng(info.seed);
-  std::uniform_real_distribution<float> offset_dist(0.0f, dist);
+    int rows = static_cast<int>(map_width / dist) + 1;
+    int cols = static_cast<int>(map_height / dist) + 1;
 
-  for (int i = 0; i < rows; ++i)
-  {
-    for (int j = 0; j < cols; ++j)
-    {
-      float x = i * dist + offset_dist(eng) - x_offset;
-      float y = j * dist + offset_dist(eng) - y_offset;
-      positions.emplace_back(x, y);
+    float x_base = (rows / 2.0f) * dist;
+    float y_base = (cols / 2.0f) * dist;
+
+    std::default_random_engine eng(info.seed);
+    std::uniform_real_distribution<float> offset_dist(0.0f, dist);
+
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            float x = i * dist + offset_dist(eng) - x_base;
+            float y = j * dist + offset_dist(eng) - y_base;
+
+            if (x < -x_offset || x > x_offset || y < -y_offset || y > y_offset) {
+                continue; // 确保点在地图范围内
+            }
+            positions.emplace_back(x, y);
+        }
     }
-  }
 }
 
 void Maps::scaleAndTranslateCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float scale_factor, Eigen::Vector2f position, Eigen::Matrix3f &rotation)
