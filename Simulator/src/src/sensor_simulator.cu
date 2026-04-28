@@ -1,11 +1,11 @@
 #include "sensor_simulator.cuh"
 
 namespace raycast
-{   
+{
     GridMap::GridMap(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float resolution, int occupy_threshold = 1){
         const float epsilon = 0.001f;   // 避免数值误差导致 (1)建图空行 (2)边缘点被忽略
         Eigen::Vector4f min_pt, max_pt;
-        pcl::getMinMax3D(*cloud, min_pt, max_pt);
+        pcl::getMinMax3D(*cloud, min_pt, max_pt); //得到点云在 x/y/z 三个方向上的最小值和最大值。
         float length = max_pt(0) - min_pt(0) + 2 * epsilon;  // 保证各个边界最大值能被取到
         float width  = max_pt(1) - min_pt(1) + 2 * epsilon;
         float height = max_pt(2) - min_pt(2) + 2 * epsilon;
