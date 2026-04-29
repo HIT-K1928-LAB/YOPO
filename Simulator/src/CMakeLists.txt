@@ -6,11 +6,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 ## Find catkin and any catkin packages
 find_package(catkin REQUIRED COMPONENTS
+        geometry_msgs
         roscpp
+        rospy
         nav_msgs
         std_msgs
         sensor_msgs
         cv_bridge
+        tf
 )
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
@@ -44,7 +47,7 @@ set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
 catkin_package(
         INCLUDE_DIRS include
         LIBRARIES sensor_simulator
-        CATKIN_DEPENDS roscpp
+        CATKIN_DEPENDS geometry_msgs roscpp rospy nav_msgs std_msgs sensor_msgs cv_bridge tf
         DEPENDS OpenCV)
 
 ## Specify additional locations of header files
@@ -71,3 +74,9 @@ target_compile_definitions(sensor_simulator_cuda PRIVATE CONFIG_FILE_PATH="${CMA
 add_executable(dataset_generator src/dataset_generator.cpp src/maps.cpp src/perlinnoise.cpp)
 target_link_libraries(dataset_generator ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} raycast_cuda yaml-cpp)
 target_compile_definitions(dataset_generator PRIVATE CONFIG_FILE_PATH="${CMAKE_SOURCE_DIR}/config/config.yaml")
+
+catkin_install_python(PROGRAMS
+        sim_odom.py
+        scripts/sim_odom_keyboard.py
+        DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

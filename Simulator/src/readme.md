@@ -53,6 +53,21 @@ cd src/sensor_simulator
 rviz -d rviz.rviz
 ```
 
+如果你想手动控制位姿，可以运行键盘版里程计节点：
+```angular2html
+source devel/setup.bash
+rosrun sensor_simulator sim_odom_keyboard.py
+```
+
+按键说明：
+```angular2html
+w / s : 前进 / 后退
+a / d : 左转 / 右转
+r / f : 上升 / 下降
+space : 悬停
+q     : 退出
+```
+
 
 ### 5 实时性与资源占用
 
