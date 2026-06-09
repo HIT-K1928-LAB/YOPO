@@ -208,6 +208,44 @@ We use random training scenes, images, and states to enhance generalization. Pol
     <img src="docs/sim2real.gif" alt="sim2real" />
 </p>
 
+## ONNX Export
+YOPO can also be exported to ONNX for standard ONNX Runtime deployment. The exported graph covers only
+`YopoNetwork.forward(depth, obs)`. The existing depth pre-processing and `obs` construction in
+`test_yopo_ros.py` should remain outside the ONNX graph.
+
+**1. Prepare**
+```
+conda activate yopo
+pip install onnx onnxruntime
+```
+
+**2. Export to ONNX (interactive shell)**
+```
+cd YOPO
+conda activate yopo
+python export_onnx.py --trial 1 --epoch 50 --output yopo.onnx
+```
+
+**3. Export to ONNX (non-interactive)**
+```
+conda run -n yopo python YOPO/export_onnx.py --trial 1 --epoch 50 --output YOPO/yopo.onnx
+conda run -n yopo python YOPO/export_onnx.py --weight /abs/path/model.pth --output YOPO/yopo.onnx
+```
+
+**4. ONNX Inputs / Outputs**
+```
+depth         float32 [1, 1, 96, 160]
+obs           float32 [1, 9, 3, 5]
+endstate      float32 [1, 9, 3, 5]
+score         float32 [1, 3, 5]
+```
+
+**5. Deployment Notes**
++ `depth` must still follow the current preprocessing in `test_yopo_ros.py`: resize, distance clipping, normalization, and NaN inpainting.
++ `obs` must still be prepared with the existing `normalize_obs()` and `prepare_input()` logic before calling ONNX.
++ The current export keeps batch size, image size, and primitive grid fixed to the training configuration in `traj_opt.yaml`.
++ For TensorRT deployment on Jetson, using the default `opset=13` is usually the safest starting point.
+
 
 ## RKNN Deployment
 On the RK3566 clip (only 1 TOPS NPU), after deploying with RKNN and INT8 quantization, inference takes only about 20 ms (backbone: ResNet-14). The update of deployment on RK3566 or RK3588 is coming soon.
