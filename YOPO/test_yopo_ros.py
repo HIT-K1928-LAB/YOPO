@@ -34,12 +34,18 @@ class YopoNet:
         cfg["train"] = False
         self.height = cfg['image_height']
         self.width = cfg['image_width']
-        self.min_dis, self.max_dis = 0.04, 20.0
+        self.min_dis, self.max_dis = 0.4, 6.0
         self.goal = np.array(self.config['goal'])
         self.plan_from_reference = self.config['plan_from_reference']
         self.use_trt = self.config['use_tensorrt']
         self.verbose = self.config['verbose']
         self.visualize = self.config['visualize']
+        self.show_depth = self.config.get('show_depth', False)
+        self.publish_processed_depth = self.config.get('publish_processed_depth', False)
+        self.depth_vis_topic = self.config.get('depth_vis_topic', '/yopo_net/processed_depth')
+        self.depth_window_name = self.config.get('depth_window_name', 'YOPO Processed Depth')
+        self.depth_window_initialized = False
+        self.depth_colormap = getattr(cv2, "COLORMAP_TURBO", cv2.COLORMAP_JET)
         self.Rotation_bc = R.from_euler('ZYX', [0, self.config['pitch_angle_deg'], 0], degrees=True).as_matrix() # 相机到机体的旋转矩阵,相机俯仰角
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -88,21 +94,23 @@ class YopoNet:
         self.lattice_traj_pub = rospy.Publisher("/yopo_net/lattice_trajs_visual", PointCloud2, queue_size=1) # 发布可视化候选轨迹点云
         self.best_traj_pub = rospy.Publisher("/yopo_net/best_traj_visual", PointCloud2, queue_size=1) # 发布最优轨迹点云
         self.all_trajs_pub = rospy.Publisher("/yopo_net/trajs_visual", PointCloud2, queue_size=1) # 可视化所有轨迹候选
+        self.processed_depth_pub = rospy.Publisher(self.depth_vis_topic, Image, queue_size=1) if self.publish_processed_depth else None
         self.ctrl_pub = rospy.Publisher(self.config["ctrl_topic"], PositionCommand, queue_size=1) # 发布无人机控制指令
         # ros subscriber
         self.odom_sub = rospy.Subscriber(self.config['odom_topic'], Odometry, self.callback_odometry, queue_size=1, tcp_nodelay=True) # 订阅里程计
         self.depth_sub = rospy.Subscriber(self.config['depth_topic'], Image, self.callback_depth, queue_size=1, tcp_nodelay=True) # 订阅深度图像
         self.goal_sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.callback_set_goal, queue_size=1) # 获取设定目标点
         # ros timer
+        rospy.on_shutdown(self.shutdown_hook)
         rospy.sleep(1.0)  # wait connection...
         self.timer_ctrl = rospy.Timer(rospy.Duration(self.ctrl_dt), self.control_pub) # 定时执行无人机控制逻辑并发布
         print("YOPO Net Node Ready!")
         rospy.spin() # 阻塞当前线程并让节点持续运行
 
     def callback_set_goal(self, data):
-        self.goal = np.asarray([data.pose.position.x, data.pose.position.y, 2]) # 固定高度2米
+        self.goal = np.asarray([data.pose.position.x, data.pose.position.y, data.pose.position.z]) # 固定高度2米
         self.arrive = False
-        print(f"New Goal: ({data.pose.position.x:.1f}, {data.pose.position.y:.1f})")
+        print(f"New Goal: ({data.pose.position.x:.1f}, {data.pose.position.y:.1f}, {data.pose.position.z:.1f})")
 
     # the first frame
     def callback_odometry(self, data):
@@ -117,7 +125,7 @@ class YopoNet:
         self.odom_init = True
 
         pos = np.array((self.odom.pose.pose.position.x, self.odom.pose.pose.position.y, self.odom.pose.pose.position.z))
-        if np.linalg.norm(pos - self.goal) < 5 and not self.arrive:
+        if np.linalg.norm(pos - self.goal) < 1.0 and not self.arrive:
             print("Arrive!")
             self.arrive = True
 
@@ -166,9 +174,8 @@ class YopoNet:
         nan_mask = np.isnan(depth) | (depth < self.min_dis / self.max_dis) # 检测深度图中 NaN 值 和过近的值
         interpolated_image = cv2.inpaint(np.uint8(depth * 255), np.uint8(nan_mask), 1, cv2.INPAINT_NS) # 填补图像中无效区域
         interpolated_image = interpolated_image.astype(np.float32) / 255.0 # 再次归一化到 [0, 1]
+        self.visualize_depth(interpolated_image, data.header)
         depth = interpolated_image.reshape([1, 1, self.height, self.width])
-        # cv2.imshow("1", depth[0][0])
-        # cv2.waitKey(1)
 
         # 2. YOPO Network Inference
         # input prepare
@@ -248,6 +255,42 @@ class YopoNet:
             self.desire_init = True
             self.last_control_msg = control_msg
             self.ctrl_pub.publish(control_msg)
+
+    def visualize_depth(self, depth_image, header=None):
+        if not self.show_depth and self.processed_depth_pub is None:
+            return
+
+        # 处理后的深度图仍是 [0, 1]，这里转成更容易看懂的伪彩色图。
+        depth_uint8 = np.clip(depth_image * 255.0, 0, 255).astype(np.uint8)
+        depth_vis = cv2.applyColorMap(255 - depth_uint8, self.depth_colormap)
+
+        if self.show_depth:
+            try:
+                if not self.depth_window_initialized:
+                    cv2.namedWindow(self.depth_window_name, cv2.WINDOW_NORMAL)
+                    self.depth_window_initialized = True
+                cv2.imshow(self.depth_window_name, depth_vis)
+                cv2.waitKey(1)
+            except cv2.error as exc:
+                rospy.logwarn_throttle(5.0, f"OpenCV depth preview disabled: {exc}")
+                self.show_depth = False
+
+        if self.processed_depth_pub is not None and self.processed_depth_pub.get_num_connections() > 0:
+            vis_msg = Image()
+            vis_msg.header = header if header is not None else std_msgs.msg.Header(stamp=rospy.Time.now())
+            vis_msg.height, vis_msg.width = depth_vis.shape[:2]
+            vis_msg.encoding = "bgr8"
+            vis_msg.is_bigendian = 0
+            vis_msg.step = depth_vis.shape[1] * depth_vis.shape[2]
+            vis_msg.data = depth_vis.tobytes()
+            self.processed_depth_pub.publish(vis_msg)
+
+    def shutdown_hook(self):
+        if self.depth_window_initialized:
+            try:
+                cv2.destroyWindow(self.depth_window_name)
+            except cv2.error:
+                pass
 
     def process_output(self, endstate_pred, score_pred, return_all_preds=False):
         endstate_pred = endstate_pred.reshape(9, self.lattice_primitive.traj_num).T
@@ -397,6 +440,9 @@ if __name__ == "__main__":
                 'ctrl_topic': '/so3_control/pos_cmd',        # 控制器话题
                 'plan_from_reference': False,   # 从参考状态规划
                 'verbose': False,               # 打印耗时？
-                'visualize': True               # 可视化所有轨迹？(实飞改为False节省计算)
+                'visualize': True,              # 可视化所有轨迹？(实飞改为False节省计算)
+                'show_depth': False,             # 本机弹窗显示处理后的深度图
+                'publish_processed_depth': True,  # 发布处理后的深度图，便于 rqt_image_view / RViz 查看
+                'depth_vis_topic': '/yopo_net/processed_depth'
                 }
     YopoNet(settings, weight)
